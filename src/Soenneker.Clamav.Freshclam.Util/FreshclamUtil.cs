@@ -12,6 +12,7 @@ using Soenneker.Extensions.ValueTask;
 using Soenneker.Utils.Directory.Abstract;
 using Soenneker.Utils.File.Abstract;
 using Soenneker.Utils.Path.Abstract;
+using Soenneker.Utils.Paths.Resources.Abstract;
 using Soenneker.Utils.PooledStringBuilders;
 using Soenneker.Utils.Process.Abstract;
 using Soenneker.Utils.Runtime;
@@ -28,34 +29,26 @@ public sealed class FreshclamUtil : IFreshclamUtil
     private readonly IFileUtil _fileUtil;
     private readonly IDirectoryUtil _directoryUtil;
     private readonly IPathUtil _pathUtil;
+    private readonly IResourcesPathUtil _resourcesPathUtil;
     private readonly ILogger<FreshclamUtil> _logger;
-    private readonly string _runtimeDirectory;
-    private readonly string _freshclamPath;
-    private readonly string _defaultDatabaseDirectory;
-    private readonly Dictionary<string, string>? _environmentVariables;
+    private readonly bool _windows;
+    private readonly string _runtimeIdentifier;
 
     public FreshclamUtil(IProcessUtil processUtil, IFileUtil fileUtil, IDirectoryUtil directoryUtil, IPathUtil pathUtil,
-        ILogger<FreshclamUtil> logger)
+        IResourcesPathUtil resourcesPathUtil, ILogger<FreshclamUtil> logger)
     {
         _processUtil = processUtil;
         _fileUtil = fileUtil;
         _directoryUtil = directoryUtil;
         _pathUtil = pathUtil;
+        _resourcesPathUtil = resourcesPathUtil;
         _logger = logger;
 
         EnsureSupportedPlatform();
 
-        bool windows = RuntimeUtil.IsWindows();
-        string runtimeIdentifier = windows ? "win-x64" : "linux-x64";
-        _runtimeDirectory = Path.Combine(AppContext.BaseDirectory, "Resources", runtimeIdentifier, "freshclam");
-        string binaryDirectory = windows ? _runtimeDirectory : Path.Combine(_runtimeDirectory, "bin");
-        _freshclamPath = Path.Combine(binaryDirectory, windows ? "freshclam.exe" : "freshclam");
-        _defaultDatabaseDirectory = Path.Combine(AppContext.BaseDirectory, "Resources", "clamav-database");
-
-        if (!windows)
-            _environmentVariables = BuildLinuxEnvironment();
-
-        _logger.LogDebug("Initialized FreshClam for {RuntimeIdentifier} at {RuntimeDirectory}", runtimeIdentifier, _runtimeDirectory);
+        _windows = RuntimeUtil.IsWindows();
+        _runtimeIdentifier = _windows ? "win-x64" : "linux-x64";
+        _logger.LogDebug("Initialized FreshClam for {RuntimeIdentifier}", _runtimeIdentifier);
     }
 
     public async ValueTask<IReadOnlyList<string>> Update(string? databaseDirectory = null, FreshclamOptions? options = null,
@@ -63,10 +56,13 @@ public sealed class FreshclamUtil : IFreshclamUtil
     {
         options ??= new FreshclamOptions();
         Validate(options);
-        await EnsureToolExists(cancellationToken).NoSync();
-        EnsureExecutable(_freshclamPath);
+        (string runtimeDirectory, string freshclamPath) = await GetRuntimePaths(cancellationToken).NoSync();
+        await EnsureToolExists(freshclamPath, cancellationToken).NoSync();
+        EnsureExecutable(freshclamPath);
 
-        string fullDatabaseDirectory = Path.GetFullPath(string.IsNullOrWhiteSpace(databaseDirectory) ? _defaultDatabaseDirectory : databaseDirectory);
+        string fullDatabaseDirectory = string.IsNullOrWhiteSpace(databaseDirectory)
+            ? await _resourcesPathUtil.GetResourceFilePath("clamav-database", cancellationToken).NoSync()
+            : Path.GetFullPath(databaseDirectory);
         await _directoryUtil.Create(fullDatabaseDirectory, log: false, cancellationToken).NoSync();
         string configurationPath = await _pathUtil.GetRandomTempFilePath(".conf", cancellationToken).NoSync();
 
@@ -80,8 +76,8 @@ public sealed class FreshclamUtil : IFreshclamUtil
             await _fileUtil.Write(configurationPath, BuildConfiguration(options), log: false, cancellationToken).NoSync();
 
             string arguments = $"--config-file={Quote(configurationPath)} --datadir={Quote(fullDatabaseDirectory)} --stdout";
-            List<string> output = await _processUtil.Start(_freshclamPath, _runtimeDirectory, arguments, timeout: options.Timeout, log: false,
-                environmentalVars: _environmentVariables, cancellationToken: cancellationToken).NoSync();
+            List<string> output = await _processUtil.Start(freshclamPath, runtimeDirectory, arguments, timeout: options.Timeout, log: false,
+                environmentalVars: BuildEnvironment(runtimeDirectory), cancellationToken: cancellationToken).NoSync();
 
             await ValidateDatabases(fullDatabaseDirectory, cancellationToken).NoSync();
             await _fileUtil.TryDelete(Path.Combine(fullDatabaseDirectory, "freshclam.dat"), log: false, cancellationToken).NoSync();
@@ -130,16 +126,17 @@ public sealed class FreshclamUtil : IFreshclamUtil
 
     public async ValueTask<string> GetVersion(CancellationToken cancellationToken = default)
     {
-        await EnsureToolExists(cancellationToken).NoSync();
-        EnsureExecutable(_freshclamPath);
+        (string runtimeDirectory, string freshclamPath) = await GetRuntimePaths(cancellationToken).NoSync();
+        await EnsureToolExists(freshclamPath, cancellationToken).NoSync();
+        EnsureExecutable(freshclamPath);
         string configurationPath = await _pathUtil.GetRandomTempFilePath(".conf", cancellationToken).NoSync();
 
         try
         {
             await _fileUtil.Write(configurationPath, BuildConfiguration(new FreshclamOptions()), log: false, cancellationToken).NoSync();
             string arguments = $"--config-file={Quote(configurationPath)} --version";
-            List<string> output = await _processUtil.Start(_freshclamPath, _runtimeDirectory, arguments, log: false,
-                environmentalVars: _environmentVariables, cancellationToken: cancellationToken).NoSync();
+            List<string> output = await _processUtil.Start(freshclamPath, runtimeDirectory, arguments, log: false,
+                environmentalVars: BuildEnvironment(runtimeDirectory), cancellationToken: cancellationToken).NoSync();
             return output.Count == 0 ? string.Empty : output[0];
         }
         finally
@@ -159,9 +156,12 @@ public sealed class FreshclamUtil : IFreshclamUtil
         }
     }
 
-    private Dictionary<string, string> BuildLinuxEnvironment()
+    private Dictionary<string, string>? BuildEnvironment(string runtimeDirectory)
     {
-        string libraryPath = string.Join(Path.PathSeparator, Path.Combine(_runtimeDirectory, "lib64"), Path.Combine(_runtimeDirectory, "lib"));
+        if (_windows)
+            return null;
+
+        string libraryPath = string.Join(Path.PathSeparator, Path.Combine(runtimeDirectory, "lib64"), Path.Combine(runtimeDirectory, "lib"));
         string? existing = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
         if (!string.IsNullOrWhiteSpace(existing))
             libraryPath = $"{libraryPath}{Path.PathSeparator}{existing}";
@@ -169,7 +169,7 @@ public sealed class FreshclamUtil : IFreshclamUtil
         return new Dictionary<string, string>
         {
             ["LD_LIBRARY_PATH"] = libraryPath,
-            ["CVD_CERTS_DIR"] = Path.Combine(_runtimeDirectory, "etc", "certs")
+            ["CVD_CERTS_DIR"] = Path.Combine(runtimeDirectory, "etc", "certs")
         };
     }
 
@@ -192,10 +192,17 @@ public sealed class FreshclamUtil : IFreshclamUtil
         return builder.ToString();
     }
 
-    private async ValueTask EnsureToolExists(CancellationToken cancellationToken)
+    private async ValueTask<(string RuntimeDirectory, string FreshclamPath)> GetRuntimePaths(CancellationToken cancellationToken)
     {
-        if (!await _fileUtil.Exists(_freshclamPath, cancellationToken).NoSync())
-            throw new FileNotFoundException("The bundled FreshClam executable was not found.", _freshclamPath);
+        string runtimeDirectory = await _resourcesPathUtil.GetResourceFilePath(Path.Combine(_runtimeIdentifier, "freshclam"), cancellationToken).NoSync();
+        string binaryDirectory = _windows ? runtimeDirectory : Path.Combine(runtimeDirectory, "bin");
+        return (runtimeDirectory, Path.Combine(binaryDirectory, _windows ? "freshclam.exe" : "freshclam"));
+    }
+
+    private async ValueTask EnsureToolExists(string freshclamPath, CancellationToken cancellationToken)
+    {
+        if (!await _fileUtil.Exists(freshclamPath, cancellationToken).NoSync())
+            throw new FileNotFoundException("The bundled FreshClam executable was not found.", freshclamPath);
     }
 
     private static void Validate(FreshclamOptions options)

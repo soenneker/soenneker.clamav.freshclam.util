@@ -4,6 +4,7 @@ using Soenneker.Clamav.Freshclam.Util.Abstract;
 using Soenneker.Utils.Directory.Registrars;
 using Soenneker.Utils.File.Registrars;
 using Soenneker.Utils.Path.Registrars;
+using Soenneker.Utils.Paths.Resources.Registrars;
 using Soenneker.Utils.Process.Registrars;
 
 namespace Soenneker.Clamav.Freshclam.Util.Registrars;
@@ -21,6 +22,7 @@ public static class FreshclamUtilRegistrar
         services.AddDirectoryUtilAsSingleton()
                 .AddFileUtilAsSingleton()
                 .AddPathUtilAsSingleton()
+                .AddResourcesPathUtilAsSingleton()
                 .AddProcessUtilAsSingleton()
                 .TryAddSingleton<IFreshclamUtil, FreshclamUtil>();
 
@@ -35,6 +37,7 @@ public static class FreshclamUtilRegistrar
         services.AddDirectoryUtilAsScoped()
                 .AddFileUtilAsScoped()
                 .AddPathUtilAsScoped()
+                .AddResourcesPathUtilAsScoped()
                 .AddProcessUtilAsScoped()
                 .TryAddScoped<IFreshclamUtil, FreshclamUtil>();
 
