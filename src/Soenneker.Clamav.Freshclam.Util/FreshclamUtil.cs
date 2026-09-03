@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Soenneker.Asyncs.Locks;
 using Soenneker.Clamav.Freshclam.Util.Abstract;
 using Soenneker.Clamav.Freshclam.Util.Options;
 using Soenneker.Extensions.Task;
@@ -21,7 +22,7 @@ namespace Soenneker.Clamav.Freshclam.Util;
 
 public sealed class FreshclamUtil : IFreshclamUtil
 {
-    private static readonly SemaphoreSlim _updateLock = new(1, 1);
+    private static readonly AsyncLock _updateLock = new();
     private static readonly string[] _definitionExtensions = ["cvd", "cld", "cud", "ndb"];
     private static readonly string[] _requiredDatabases = ["main", "daily", "bytecode"];
 
@@ -66,24 +67,26 @@ public sealed class FreshclamUtil : IFreshclamUtil
         await _directoryUtil.Create(fullDatabaseDirectory, log: false, cancellationToken).NoSync();
         string configurationPath = await _pathUtil.GetRandomTempFilePath(".conf", cancellationToken).NoSync();
 
-        _logger.LogInformation("Updating ClamAV definitions in {DatabaseDirectory}", fullDatabaseDirectory);
-        _logger.LogDebug("Waiting for the FreshClam update lock");
-        await _updateLock.WaitAsync(cancellationToken).NoSync();
-
         try
         {
-            _logger.LogDebug("Acquired the FreshClam update lock");
-            await _fileUtil.Write(configurationPath, BuildConfiguration(options), log: false, cancellationToken).NoSync();
+            _logger.LogInformation("Updating ClamAV definitions in {DatabaseDirectory}", fullDatabaseDirectory);
+            _logger.LogDebug("Waiting for the FreshClam update lock");
 
-            string arguments = $"--config-file={Quote(configurationPath)} --datadir={Quote(fullDatabaseDirectory)} --stdout";
-            List<string> output = await _processUtil.Start(freshclamPath, runtimeDirectory, arguments, timeout: options.Timeout, log: false,
-                environmentalVars: BuildEnvironment(runtimeDirectory), cancellationToken: cancellationToken).NoSync();
+            using (await _updateLock.Lock(cancellationToken).NoSync())
+            {
+                _logger.LogDebug("Acquired the FreshClam update lock");
+                await _fileUtil.Write(configurationPath, BuildConfiguration(options), log: false, cancellationToken).NoSync();
 
-            await ValidateDatabases(fullDatabaseDirectory, cancellationToken).NoSync();
-            await _fileUtil.TryDelete(Path.Combine(fullDatabaseDirectory, "freshclam.dat"), log: false, cancellationToken).NoSync();
-            _logger.LogInformation("Updated ClamAV definitions in {DatabaseDirectory}; FreshClam returned {OutputLineCount} output lines",
-                fullDatabaseDirectory, output.Count);
-            return output;
+                string arguments = $"--config-file={Quote(configurationPath)} --datadir={Quote(fullDatabaseDirectory)} --stdout";
+                List<string> output = await _processUtil.Start(freshclamPath, runtimeDirectory, arguments, timeout: options.Timeout, log: false,
+                    environmentalVars: BuildEnvironment(runtimeDirectory), cancellationToken: cancellationToken).NoSync();
+
+                await ValidateDatabases(fullDatabaseDirectory, cancellationToken).NoSync();
+                await _fileUtil.TryDelete(Path.Combine(fullDatabaseDirectory, "freshclam.dat"), log: false, cancellationToken).NoSync();
+                _logger.LogInformation("Updated ClamAV definitions in {DatabaseDirectory}; FreshClam returned {OutputLineCount} output lines",
+                    fullDatabaseDirectory, output.Count);
+                return output;
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -97,8 +100,6 @@ public sealed class FreshclamUtil : IFreshclamUtil
         }
         finally
         {
-            _updateLock.Release();
-            _logger.LogDebug("Released the FreshClam update lock");
             await _fileUtil.TryDelete(configurationPath, log: false, CancellationToken.None).NoSync();
         }
     }
