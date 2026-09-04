@@ -47,6 +47,6 @@
         <PackageReference Include="Soenneker.Clamav.Freshclam.Windows" Version="4.0.4" PrivateAssets="analyzers;build" />
         <PackageReference Include="Soenneker.Utils.File" Version="4.0.2247" />
         <PackageReference Include="Soenneker.Utils.Paths.Resources" Version="4.0.232" />
-        <PackageReference Include="Soenneker.Utils.Process" Version="4.0.1543" />
+        <PackageReference Include="Soenneker.Utils.Process" Version="4.0.1544" />
     </ItemGroup>
 </Project>
