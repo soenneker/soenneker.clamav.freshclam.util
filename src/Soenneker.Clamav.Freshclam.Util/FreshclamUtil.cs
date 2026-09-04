@@ -20,6 +20,7 @@ using Soenneker.Utils.Runtime;
 
 namespace Soenneker.Clamav.Freshclam.Util;
 
+/// <inheritdoc cref="IFreshclamUtil" />
 public sealed class FreshclamUtil : IFreshclamUtil
 {
     private static readonly AsyncLock _updateLock = new();
