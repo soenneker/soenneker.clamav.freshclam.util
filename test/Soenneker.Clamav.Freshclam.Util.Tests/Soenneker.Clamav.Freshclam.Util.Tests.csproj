@@ -27,4 +27,7 @@
         <ProjectReference Include="..\..\src\Soenneker.Clamav.Freshclam.Util\Soenneker.Clamav.Freshclam.Util.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+        <PackageReference Include="Soenneker.Extensions.ValueTask" Version="4.0.123" />
+    </ItemGroup>
 </Project>
