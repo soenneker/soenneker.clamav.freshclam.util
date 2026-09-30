@@ -25,14 +25,14 @@ public sealed class FreshclamUtilTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Gets_bundled_version(CancellationToken cancellationToken)
+    public async ValueTask Gets_bundled_version(CancellationToken cancellationToken)
     {
         string version = await _util.GetVersion(cancellationToken).NoSync();
         await Assert.That(version).StartsWith("ClamAV ");
     }
 
     [Test]
-    public async Task HasDefinitions_detects_a_database_file(CancellationToken cancellationToken)
+    public async ValueTask HasDefinitions_detects_a_database_file(CancellationToken cancellationToken)
     {
         string directory = await _directoryUtil.CreateTempDirectory(cancellationToken).NoSync();
 
