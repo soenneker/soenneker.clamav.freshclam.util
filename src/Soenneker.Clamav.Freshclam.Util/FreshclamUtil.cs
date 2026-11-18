@@ -50,7 +50,8 @@ public sealed class FreshclamUtil : IFreshclamUtil
 
         _windows = RuntimeUtil.IsWindows();
         _runtimeIdentifier = _windows ? "win-x64" : "linux-x64";
-        _logger.LogDebug("Initialized FreshClam for {RuntimeIdentifier}", _runtimeIdentifier);
+        if (_logger.IsEnabled(LogLevel.Debug))
+            _logger.LogDebug("Initialized FreshClam for {RuntimeIdentifier}", _runtimeIdentifier);
     }
 
     public async ValueTask<IReadOnlyList<string>> Update(string? databaseDirectory = null, FreshclamOptions? options = null,
@@ -117,12 +118,14 @@ public sealed class FreshclamUtil : IFreshclamUtil
         {
             if ((await _directoryUtil.GetFilesByExtension(fullDatabaseDirectory, extension, recursive: false, cancellationToken).NoSync()).Count > 0)
             {
-                _logger.LogDebug("Found ClamAV {DefinitionExtension} definitions in {DatabaseDirectory}", extension, fullDatabaseDirectory);
+                if (_logger.IsEnabled(LogLevel.Debug))
+                    _logger.LogDebug("Found ClamAV {DefinitionExtension} definitions in {DatabaseDirectory}", extension, fullDatabaseDirectory);
                 return true;
             }
         }
 
-        _logger.LogDebug("No supported ClamAV definitions were found in {DatabaseDirectory}", fullDatabaseDirectory);
+        if (_logger.IsEnabled(LogLevel.Debug))
+            _logger.LogDebug("No supported ClamAV definitions were found in {DatabaseDirectory}", fullDatabaseDirectory);
         return false;
     }
 
